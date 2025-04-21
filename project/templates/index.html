@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Excel数据与绘图工具</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.js"></script>
+    <style>
+        .top-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+        }
+    
+        .table-area {
+            flex: 1;
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+    
+        .plot-area {
+            flex: 1;
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+    
+        .bottom-row {
+            display: flex;
+            margin-top: 20px;
+            gap: 20px;
+        }
+    
+        .file-tree-container {
+            width: 300px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            max-height: 500px;
+            overflow: auto;
+            font-family: monospace;
+        }
+    
+        .editor-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+    
+        #editor {
+            height: 400px;
+            border: 1px solid #ccc;
+        }
+    
+        #plotResult {
+            max-width: 100%;
+            max-height: 300px;
+            object-fit: contain;
+            border: 1px solid #ddd;
+            margin-top: 10px;
+            display: block;
+        }
+    
+        .plot-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+    
+        #pdfFilename {
+            width: 150px;
+        }
+    </style>
+</head>
+
+
+<body>
+
+<!-- 顶部区域：表格 + 绘图 -->
+<div class="top-row">
+    <!-- 📊 表格区域 -->
+    <div class="table-area">
+        <h3>📊 数据表格</h3>
+        <div id="excelTable"></div>
+    </div>
+
+    <!-- 📈 绘图区域 + 下载 -->
+    <div class="plot-area">
+        <div class="plot-header">
+            <h3>📈 绘图结果</h3>
+            <div>
+                <input type="text" id="pdfFilename" placeholder="文件名">
+                <button onclick="downloadPDF()" id="downloadBtn" disabled>下载PDF</button>
+            </div>
+        </div>
+        <img id="plotResult" src="" alt="绘图结果将在此显示">
+    </div>
+</div>
+
+<!-- 底部区域：文件树 + 编辑器 -->
+<div class="bottom-row">
+    <!-- 📁 文件树 -->
+    <div class="file-tree-container">
+        <h3 style="margin-top: 0;">📁 Python 文件</h3>
+        <input type="text" id="treeSearch" placeholder="搜索…" style="width: 90%; margin-bottom: 10px;" />
+        <div id="fileTree"></div>
+    </div>
+
+    <!-- 🧠 代码编辑器 -->
+    <div class="editor-container">
+        <h3 style="margin-top: 0;">🧠 代码编辑区域</h3>
+        <div id="editor"></div>
+        <div style="margin-top: 10px;">
+            <button onclick="submitData()">绘图</button>
+            <button onclick="reloadSelectedCode()">重新导入代码</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let expandedFolders = new Set();
+const editor = ace.edit("editor", {
+    mode: "ace/mode/python",
+    theme: "ace/theme/github",
+});
+
+// 初始化默认代码
+editor.setValue(`# 请在这里输入绘图代码\nimport matplotlib.pyplot as plt`, -1);
+
+const container = document.getElementById('excelTable');
+const hot = new Handsontable(container, {
+    data: Handsontable.helper.createSpreadsheetData(5,5),
+    rowHeaders: true,
+    colHeaders: true,
+    contextMenu: true,
+    licenseKey: 'non-commercial-and-evaluation'
+});
+
+// 获取文件列表函数
+function refreshFileList(){
+    fetch('/list_code_files')
+    .then(res => res.json())
+    .then(files => {
+        const selector = document.getElementById('fileSelector');
+        selector.innerHTML = '<option value="" disabled selected>请选择.py文件</option>';
+        files.forEach(file => {
+            let option = document.createElement('option');
+            option.value = file;
+            option.textContent = file;
+            selector.appendChild(option);
+        });
+    });
+}
+
+document.getElementById('fileSelector').addEventListener('change', function(){
+    const filename = this.value;
+    fetch(`/get_code/${filename}`)
+    .then(res => res.json())
+    .then(res => {
+        if(res.status === 'success'){
+            editor.setValue(res.code, -1);
+        } else {
+            alert('加载文件失败！');
+        }
+    });
+});
+
+// 提交数据绘图
+function submitData() {
+    fetch('/plot', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+            data: hot.getData(),
+            code: editor.getValue()
+        })
+    })
+    .then(res => res.json())
+    .then(res => {
+        if(res.status === 'success'){
+            const img = document.getElementById('plotResult');
+            img.src = res.image_url + '?' + new Date().getTime();
+            document.getElementById('downloadBtn').disabled = false;
+        }else{
+            alert("绘图失败: " + res.error);
+            document.getElementById('downloadBtn').disabled = true;
+        }
+    });
+}
+
+// 下载PDF
+function downloadPDF() {
+    const user_filename = document.getElementById('pdfFilename').value.trim() || 'plot_result';
+    const url = `/download_latest_pdf?user_filename=${encodeURIComponent(user_filename)}`;
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = user_filename;  // 通知浏览器进行下载
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+function reloadSelectedCode() {
+    const selector = document.getElementById('fileSelector');
+    const selectedFile = selector.value;
+
+    if (!selectedFile) {
+        alert('请先选择一个 .py 文件');
+        return;
+    }
+
+    fetch(`/get_code/${selectedFile}`)
+    .then(res => res.json())
+    .then(res => {
+        if (res.status === 'success') {
+            editor.setValue(res.code, -1);  // -1 表示光标不移动
+        } else {
+            alert('重新加载失败');
+        }
+    });
+}
+function renderTree(container, nodes, search = "", parentPath = "") {
+    const ul = document.createElement('ul');
+    ul.style.paddingLeft = '1em';
+
+    for (const node of nodes) {
+        const li = document.createElement('li');
+        li.style.listStyle = 'none';
+
+        const currentPath = parentPath ? `${parentPath}/${node.name}` : node.name;
+
+        if (node.type === 'folder') {
+            const folderToggle = document.createElement('span');
+            folderToggle.textContent = '📁 ' + node.name;
+            folderToggle.style.cursor = 'pointer';
+
+            const subContainer = document.createElement('div');
+            subContainer.style.marginLeft = '1em';
+
+            // 是否展开
+            const isExpanded = expandedFolders.has(currentPath);
+            subContainer.style.display = isExpanded ? 'block' : 'none';
+
+            folderToggle.onclick = function () {
+                if (subContainer.style.display === 'none') {
+                    subContainer.style.display = 'block';
+                    expandedFolders.add(currentPath);
+                } else {
+                    subContainer.style.display = 'none';
+                    expandedFolders.delete(currentPath);
+                }
+            };
+
+            renderTree(subContainer, node.children, search, currentPath);
+
+            if (subContainer.innerHTML.trim() !== '') {
+                li.appendChild(folderToggle);
+                li.appendChild(subContainer);
+                ul.appendChild(li);
+            }
+
+        } else if (node.type === 'file') {
+            const match = search === "" || node.name.toLowerCase().includes(search.toLowerCase());
+            if (match) {
+                const fileLink = document.createElement('a');
+                fileLink.href = '#';
+                fileLink.textContent = '📄 ' + node.name;
+                fileLink.style.display = 'block';
+                fileLink.onclick = function () {
+                    loadFileContent(node.path);
+                    return false;
+                };
+                li.appendChild(fileLink);
+                ul.appendChild(li);
+            }
+        }
+    }
+
+    container.appendChild(ul);
+}
+
+
+function loadCodeTree(searchText = "") {
+    fetch('/code_tree')
+        .then(res => res.json())
+        .then(tree => {
+            const container = document.getElementById('fileTree');
+            container.innerHTML = '';
+            renderTree(container, tree, searchText);
+        });
+}
+
+// 搜索框监听
+document.getElementById('treeSearch').addEventListener('input', function () {
+    const searchText = this.value;
+    loadCodeTree(searchText);
+});
+
+function loadFileContent(filePath) {
+    fetch(`/get_code/${filePath}`)
+        .then(res => res.json())
+        .then(res => {
+            if (res.status === 'success') {
+                editor.setValue(res.code, -1);
+            } else {
+                alert('加载文件失败！');
+            }
+        });
+}
+
+// 首次加载文件列表
+// refreshFileList();
+// 每5秒刷新文件列表
+// setInterval(refreshFileList, 5000);
+
+</script>
+<script>
+    loadCodeTree();
+    setInterval(() => loadCodeTree(document.getElementById('treeSearch').value), 5000);
+</script>
+</body>
+</html>
